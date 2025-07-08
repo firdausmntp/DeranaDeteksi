@@ -47,7 +47,11 @@ jobs:
         run: |
           echo "Build completed. Contents of dist folder:"
           ls -la dist/
-          echo "Index.html exists:" && [ -f dist/index.html ] && echo "✅ Yes" || echo "❌ No"
+          if [ -f dist/index.html ]; then
+            echo "✅ Index.html exists"
+          else
+            echo "❌ Index.html missing"
+          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
