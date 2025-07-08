@@ -46,7 +46,7 @@ jobs:
           echo ""
           echo "Checking index.html:"
           if [ -f dist/index.html ]; then
-            echo "✅ index.html exists"
+            echo "✅ index.html exissts"
             echo "First few lines of index.html:"
             head -10 dist/index.html
           else
