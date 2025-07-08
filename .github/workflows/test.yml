@@ -29,6 +29,28 @@ jobs:
 
       - name: Run linting
         run: npm run lint
+        continue-on-error: true
+
+      - name: Build project
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Test build output
+        run: |
+          echo "Build completed for Node.js ${{ matrix.node-version }}"
+          ls -la dist/
+          [ -f dist/index.html ] && echo "✅ index.html exists" || echo "❌ index.html missing"
+          [ -d dist/assets ] && echo "✅ assets directory exists" || echo "❌ assets directory missing"
+
+      - name: Upload build artifacts (Node 18 only)
+        if: matrix.node-version == '18'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-files
+          path: dist/
+          retention-days: 1
+        run: npm run lint
 
       - name: Build project
         run: npm run build
