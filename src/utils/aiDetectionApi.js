@@ -1,112 +1,147 @@
-import axios from 'axios';
+import axios from 'axios'
 
-// API configuration
-const UNDETECTABLE_API_URL = 'https://undetectable.ai/';
-const QUERY_API_URL = process.env.NODE_ENV === 'development'
-    ? '/api/query' : 'https://sea-lion-app-3p5x4.ondigitalocean.app/query';
+const BASE_URL = 'https://semenjana.biz.id/allin'
 
-// Simplified headers for initial request
-const getInitialHeaders = () => ({
-    'Accept': 'text/x-component',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Content-Type': 'text/plain;charset=UTF-8',
-    'Origin': 'https://undetectable.ai',
-    'Referer': 'https://undetectable.ai/',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'same-origin',
-    'next-action': 'cfb84cd2f17fb624c8259fad25289162faf37774',
-    'next-router-state-tree': '%5B%22%22%2C%7B%22children%22%3A%5B%5B%22locale%22%2C%22en%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%2C%22%2F%22%2C%22refresh%22%5D%7D%5D%7D%2Cnull%2Cnull%2Ctrue%5D'
-});
+// Fungsi pembagi teks berdasarkan jumlah kata
+export const splitTextByWordLimit = (text, maxWords = 8000) => {
+    const words = text.trim().split(/\s+/)
+    const chunks = []
 
-// Simplified headers for query request  
-const getQueryHeaders = () => ({
-    'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'Accept-Language': 'en-US,en;q=0.7',
-    'Origin': 'https://undetectable.ai',
-    'Referer': 'https://undetectable.ai/',
-    'Sec-Fetch-Mode': 'cors',
-    'Sec-Fetch-Site': 'cross-site'
-});
+    for (let i = 0; i < words.length; i += maxWords) {
+        const chunk = words.slice(i, i + maxWords).join(' ')
+        chunks.push(chunk)
+    }
 
-// Submit text for AI detection
+    return chunks
+}
+
+// Kirim teks untuk analisis dan dapatkan ID
 export const submitTextForDetection = async (text) => {
     try {
-        const data = JSON.stringify([text, "l6_v6", true]);
+        const response = await axios.post(`${BASE_URL}/api/v1/getId`, {
+            content: text
+        }, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 15000
+        })
 
-        const response = await axios.post(UNDETECTABLE_API_URL, data, {
-            headers: getInitialHeaders(),
-            timeout: 30000
-        });
+        const { id } = response.data
+        if (!id) throw new Error('ID tidak ditemukan dalam respons.')
 
-        // Extract ID from response
-        const match = response.data.match(/"id":"([^"]+)"/);
-        if (!match) {
-            throw new Error('Failed to extract task ID from response');
-        }
-
-        return {
-            id: match[1],
-            status: 'pending'
-        };
+        return { id, status: 'pending' }
     } catch (error) {
-        console.error('Error submitting text:', error);
-
-        if (error.code === 'ERR_NETWORK') {
-            throw new Error('Network error - check CORS or connection');
-        }
-        if (error.response?.status === 429) {
-            throw new Error('Too many requests. Please wait and try again.');
-        }
-        if (error.response?.status === 403) {
-            throw new Error('Access denied. Please refresh and try again.');
-        }
-
-        throw new Error('Failed to submit text for analysis');
+        console.error('Error saat submit teks:', error)
+        throw new Error('Gagal mengirim teks untuk analisis.')
     }
-};
+}
 
-// Query detection results with simple retry logic
-export const queryDetectionResults = async (taskId, maxRetries = 20) => {
+// Ambil hasil analisis berdasarkan ID
+export const queryDetectionResults = async (id, maxRetries = 20) => {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
-            const response = await axios.post(QUERY_API_URL,
-                { id: taskId },
-                {
-                    headers: getQueryHeaders(),
-                    timeout: 15000
-                }
-            );
+            const response = await axios.post(`${BASE_URL}/api/v1/result`, {
+                id
+            }, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 15000
+            })
 
-            const result = response.data;
+            const data = response.data
+            console.log('Response received:', data); // Debug log
 
-            if (result.status === 'done') {
-                return { success: true, data: result };
+            // Check for new format with detection_scores
+            if (data?.success === true && data?.detection_scores) {
+                console.log('New format detected with detection_scores');
+                return { success: true, data }
             }
 
-            if (result.status === 'error') {
-                throw new Error(result.message || 'Analysis failed');
+            // Check for legacy format
+            if (data?.status === 'done' || data?.result !== undefined) {
+                console.log('Legacy format detected');
+                return { success: true, data }
             }
 
-            // Wait 2 seconds before retry
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (data?.status === 'error') {
+                throw new Error(data.message || 'Analisis gagal.')
+            }
 
+            console.log('No valid response format detected, retrying...'); // Debug log
+
+            await new Promise(resolve => setTimeout(resolve, 2000))
         } catch (error) {
-            if (error.response?.status === 404) {
-                throw new Error('Task ID not found');
-            }
+            console.error(`Attempt ${attempt + 1} failed:`, error.message); // Debug log
+
             if (attempt === maxRetries - 1) {
-                throw new Error('Analysis timeout - please try again');
+                throw new Error('Timeout pengambilan hasil. Coba lagi nanti.')
             }
 
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 2000))
         }
     }
 
-    throw new Error('Analysis took too long - please try again');
-};
+    throw new Error('Analisis memakan waktu terlalu lama.')
+}
 
-// Clean text utility
+// Deteksi satu bagian teks
+export const detectAIContent = async (text, onProgress) => {
+    const trimmed = text.trim()
+    if (trimmed.length < 10) throw new Error('Teks terlalu pendek.')
+    if (trimmed.length > 50000) throw new Error('Teks terlalu panjang.')
+
+    onProgress?.({ step: 'submitting', message: 'Mengirim teks untuk analisis...' })
+    const submission = await submitTextForDetection(trimmed)
+
+    onProgress?.({ step: 'processing', message: 'Menunggu hasil analisis...' })
+    const result = await queryDetectionResults(submission.id)
+
+    // Handle new API response format
+    if (result.data.detection_scores) {
+        // New format with detailed detection scores
+        const detectionScores = result.data.detection_scores;
+        const overallScore = result.data.overall_score || 0;
+
+        // Calculate average AI probability from all detectors
+        const detectorValues = Object.values(detectionScores).filter(score => typeof score === 'number');
+        const avgAiProbability = detectorValues.length > 0
+            ? Math.round(detectorValues.reduce((sum, score) => sum + score, 0) / detectorValues.length)
+            : Math.round(overallScore);
+
+        const humanProbability = 100 - avgAiProbability;
+
+        return {
+            ai_probability: avgAiProbability,
+            human_probability: humanProbability,
+            overall_score: overallScore,
+            detection_scores: detectionScores,
+            message: `AI: ${avgAiProbability}%, Human: ${humanProbability}%`,
+            raw_response: result.data,
+            // Add detailed stats for UI
+            word_count: trimmed.split(/\s+/).filter(word => word.length > 0).length,
+            character_count: trimmed.length,
+            sentence_count: trimmed.split(/[.!?]+/).filter(s => s.trim().length > 0).length,
+            reading_time: Math.ceil(trimmed.split(/\s+/).filter(word => word.length > 0).length / 200),
+            confidence_score: Math.round((100 - Math.abs(avgAiProbability - 50)) * 2) // Higher confidence when closer to extremes
+        }
+    } else {
+        // Legacy format
+        const aiScore = parseInt(result.data.result || 0)
+        const humanScore = 100 - aiScore
+
+        return {
+            ai_probability: aiScore,
+            human_probability: humanScore,
+            message: `AI: ${aiScore}%, Human: ${humanScore}%`,
+            raw_response: result.data,
+            // Add detailed stats for UI
+            word_count: trimmed.split(/\s+/).filter(word => word.length > 0).length,
+            character_count: trimmed.length,
+            sentence_count: trimmed.split(/[.!?]+/).filter(s => s.trim().length > 0).length,
+            reading_time: Math.ceil(trimmed.split(/\s+/).filter(word => word.length > 0).length / 200),
+            confidence_score: Math.round((100 - Math.abs(aiScore - 50)) * 2)
+        }
+    }
+}
+
 export const cleanTextFromHTML = (text) => {
     if (!text || typeof text !== 'string') return '';
 
@@ -123,6 +158,41 @@ export const cleanTextFromHTML = (text) => {
         .replace(/\n{3,}/g, '\n\n')
         .replace(/[ \t]+/g, ' ')
         .trim();
+};
+
+
+
+// Deteksi banyak bagian teks sekaligus
+export const detectTextInChunks = async (fullText, maxWords = 8000, onProgress) => {
+    const parts = splitTextByWordLimit(fullText, maxWords)
+    const results = []
+
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]
+        onProgress?.({ step: 'part', message: `Memproses bagian ${i + 1} dari ${parts.length}` })
+
+        try {
+            const result = await detectAIContent(part, onProgress)
+            results.push({
+                part: i + 1,
+                ...result
+            })
+        } catch (error) {
+            results.push({
+                part: i + 1,
+                error: error.message
+            })
+        }
+    }
+
+    return results
+}
+
+export const API_CONFIG = {
+    MAX_TEXT_LENGTH: 20000,
+    MIN_TEXT_LENGTH: 10,
+    MAX_RETRIES: 20,
+    RETRY_DELAY: 2000
 };
 
 // Validate text
@@ -143,67 +213,4 @@ export const validateTextForAnalysis = (text) => {
     }
 
     return { valid: true, text: trimmed };
-};
-
-// Main detection function
-export const detectAIContent = async (text, onProgress) => {
-    try {
-        // Validate and clean text
-        const validation = validateTextForAnalysis(text);
-        if (!validation.valid) {
-            throw new Error(validation.error);
-        }
-
-        const cleanedText = validation.text;
-
-        // Step 1: Submit text
-        onProgress?.({ step: 'submitting', message: 'Submitting text for analysis...' });
-        const submission = await submitTextForDetection(cleanedText);
-
-        // Step 2: Get results
-        onProgress?.({ step: 'processing', message: 'Processing AI detection...' });
-        const results = await queryDetectionResults(submission.id);
-
-        if (!results.success) {
-            throw new Error('Failed to get analysis results');
-        }
-
-        // Step 3: Format results
-        const data = results.data;
-        const aiProbability = Math.round(Math.max(0, Math.min(100, data.result || 0)));
-        const humanProbability = 100 - aiProbability;
-
-        // Calculate basic stats
-        const words = cleanedText.split(/\s+/).filter(word => word.length > 0);
-        const sentences = cleanedText.split(/[.!?]+/).filter(s => s.trim().length > 0);
-
-        const result = {
-            ai_probability: aiProbability,
-            human_probability: humanProbability,
-            confidence_score: Math.min(95, Math.max(65, 80 + Math.abs(aiProbability - 50) * 0.3)),
-            word_count: words.length,
-            character_count: cleanedText.length,
-            sentence_count: sentences.length,
-            reading_time: Math.ceil(words.length / 200),
-            detected_models: aiProbability > 80 ? ['GPT-4', 'ChatGPT'] :
-                aiProbability > 60 ? ['ChatGPT'] : [],
-            message: `Analysis completed. AI: ${aiProbability}%, Human: ${humanProbability}%`,
-            raw_response: data
-        };
-
-        onProgress?.({ step: 'completed', message: 'Analysis complete!' });
-        return result;
-
-    } catch (error) {
-        console.error('AI Detection Error:', error);
-        throw error;
-    }
-};
-
-// Export config
-export const API_CONFIG = {
-    MAX_TEXT_LENGTH: 50000,
-    MIN_TEXT_LENGTH: 10,
-    MAX_RETRIES: 20,
-    RETRY_DELAY: 2000
 };

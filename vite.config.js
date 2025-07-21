@@ -19,6 +19,8 @@ export default defineConfig({
         format: 'es'
     },
     optimizeDeps: {
-        include: ['pdfjs-dist']
-    }
+        include: ['pdfjs-dist', 'pdfjs-dist/legacy/build/pdf'],
+        exclude: ['pdfjs-dist/build/pdf.worker.min.js']
+    },
+    assetsInclude: ['**/*.worker.js', '**/*.worker.min.js']
 })
